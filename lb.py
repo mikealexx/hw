@@ -122,7 +122,9 @@ def start_load_balancer():
         while True:
             client_socket, addr = lb_socket.accept()
             print("Connection from {}:{}".format(addr[0], addr[1]))
-            threading.Thread(target=handle_client, args=(client_socket,), daemon=True).start()
+            t = threading.Thread(target=handle_client, args=(client_socket,))
+            t.setDaemon(True)
+            t.start()
 
     except KeyboardInterrupt:
         print("Shutting down Load Balancer.")

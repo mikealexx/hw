@@ -45,7 +45,7 @@ def handle_client(client_socket):
                 client_socket.sendall(response)
 
     except Exception as e:
-        print(f"[ERROR] {e}")
+        print("[ERROR] {}".format(e))
 
     finally:
         client_socket.close()

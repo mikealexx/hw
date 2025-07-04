@@ -1,4 +1,5 @@
-import socket
+import socket as sckt
+from socket import socket
 import threading
 
 # === Configuration ===
@@ -23,7 +24,7 @@ server_free_at = [0.0, 0.0, 0.0]
 def setup_backend_connections():
     global backend_sockets, backend_socket_locks
     for ip, port in BACKEND_SERVERS:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s = socket(sckt.AF_INET, sckt.SOCK_STREAM)
         s.connect((ip, port))
         backend_sockets.append(s)
         backend_socket_locks.append(threading.Lock())
@@ -91,7 +92,7 @@ def start_load_balancer():
 
     setup_backend_connections()
 
-    lb_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    lb_socket = socket(sckt.AF_INET, sckt.SOCK_STREAM)
     lb_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     lb_socket.bind((LB_HOST, LB_PORT))
     lb_socket.listen(10)

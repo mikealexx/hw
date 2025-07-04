@@ -83,7 +83,7 @@ def handle_client(client_socket):
         server_index, cost = choose_server(parsed)
 
         print("request {} assigned to server {}".format(
-            request_data, {server_index+1}))
+            request_data, server_index+1))
 
         now = time()
         server_locks[server_index].acquire()

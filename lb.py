@@ -54,6 +54,7 @@ def handle_client(client_socket):
             backend_socket.sendall(request_data)
 
             response = backend_socket.recv(4096)
+            print("response: {}".format(response))
             client_socket.sendall(response)
 
 

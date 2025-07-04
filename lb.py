@@ -15,16 +15,18 @@ BACKEND_SERVERS = [
 next_server_index = 0
 index_lock = threading.Lock()
 backend_sockets = []
-backend_locks = []
+backend_socket_locks = []
+
+server_free_at = [0.0, 0.0, 0.0]
 
 # === Initialize backend connections ===
 def setup_backend_connections():
-    global backend_sockets, backend_locks
+    global backend_sockets, backend_socket_locks
     for ip, port in BACKEND_SERVERS:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect((ip, port))
         backend_sockets.append(s)
-        backend_locks.append(threading.Lock())
+        backend_socket_locks.append(threading.Lock())
 
 # === Round robin server selection ===
 def choose_next_server():
@@ -35,17 +37,30 @@ def choose_next_server():
     index_lock.release()
     return i
 
+def parse_request(request_data):
+    type = None
+    if request_data[0] == 'M':
+        type = 'music'
+    elif request_data[0] == 'V':
+        type = 'video'
+    else:
+        type = 'picture'
+    return type, int(request_data[1])
+
 # === Handle one client request ===
 def handle_client(client_socket):
     try:
-        request_data = client_socket.recv(1024)
+        request_data = client_socket.recv(2)
         if not request_data:
             client_socket.close()
             return
+        
+        parsed_data = parse_request(request_data)
+        print("Parsed request: {}".format(parsed_data))
 
         server_index = choose_next_server()
         backend_socket = backend_sockets[server_index]
-        backend_lock = backend_locks[server_index]
+        backend_lock = backend_socket_locks[server_index]
 
         # Lock the socket so only one thread can use it at a time
         backend_lock.acquire()
@@ -53,7 +68,7 @@ def handle_client(client_socket):
         try:
             backend_socket.sendall(request_data)
 
-            response = backend_socket.recv(4096)
+            response = backend_socket.recv(2)
             print("response: {}".format(response))
             client_socket.sendall(response)
 

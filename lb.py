@@ -60,7 +60,7 @@ def start_load_balancer():
 
         while True:
             client_socket, addr = lb_socket.accept()
-            print(f"[LB] Connection from {addr}")
+            print("[LB] Connection from {}",format(addr))
             threading.Thread(target=handle_client, args=(client_socket,), daemon=True).start()
 
 

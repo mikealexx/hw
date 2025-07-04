@@ -1,6 +1,7 @@
 import socket as sckt
 from socket import socket
 import threading
+from time import time
 
 # === Configuration ===
 LB_HOST = '10.0.0.1'       # Your LB IP in the client-facing network
@@ -18,7 +19,8 @@ index_lock = threading.Lock()
 backend_sockets = []
 backend_socket_locks = []
 
-server_free_at = [0.0, 0.0, 0.0]
+server_free_at = [time(), time(), time()]
+server_free_time_locks = [threading.Lock() for _ in range(len(BACKEND_SERVERS))]
 
 # === Initialize backend connections ===
 def setup_backend_connections():
@@ -29,14 +31,42 @@ def setup_backend_connections():
         backend_sockets.append(s)
         backend_socket_locks.append(threading.Lock())
 
-# === Round robin server selection ===
-def choose_next_server():
-    global next_server_index
-    index_lock.acquire()
-    i = next_server_index
-    next_server_index = (next_server_index + 1) % len(BACKEND_SERVERS)
-    index_lock.release()
-    return i
+def get_actual_request_time(parsed_data, server_index):
+    type = parsed_data[0]
+    time = parsed_data[1]
+
+    if type == 'music':
+        if server_index == 0:
+            return time * 2
+        elif server_index == 1:
+            return time * 2
+        elif server_index == 2:
+            return time
+        
+    elif type == 'video':
+        if server_index == 0:
+            return time
+        elif server_index == 1:
+            return time
+        else:
+            return time * 3
+        
+    else:
+        if server_index == 0:
+            return time
+        elif server_index == 1:
+            return time
+        else:
+            return time * 2
+
+# === Best wait time server selection ===
+def choose_next_server(parsed_data):
+    server_times = [
+        get_actual_request_time(parsed_data, 0) + server_free_at[0],
+        get_actual_request_time(parsed_data, 1) + server_free_at[1],
+        get_actual_request_time(parsed_data, 2) + server_free_at[2]
+    ]
+    return min(range(len(server_times)), key=lambda i: server_times[i]), min(server_times)
 
 def parse_request(request_data):
     type = None
@@ -56,10 +86,13 @@ def handle_client(client_socket):
             client_socket.close()
             return
         
-        parsed_data = parse_request(request_data)
-        print("Parsed request: {}".format(parsed_data))
+        server_index, serve_time = choose_next_server(parse_request(request_data))
+        server_free_time_locks[server_index].acquire()
+        try:
+            server_free_at[server_index] = serve_time
+        finally:
+            server_free_time_locks[server_index].release()
 
-        server_index = choose_next_server()
         backend_socket = backend_sockets[server_index]
         backend_lock = backend_socket_locks[server_index]
 

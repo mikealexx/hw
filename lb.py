@@ -45,14 +45,14 @@ def handle_client(client_socket):
                 client_socket.sendall(response)
 
     except Exception as e:
-        print("[ERROR] {}".format(e))
+        print(f"[ERROR] {e}")
 
     finally:
         client_socket.close()
 
 
 def start_load_balancer():
-    print("[LB] Starting Load Balancer on {}:{}".format(LB_HOST, LB_PORT))
+    print(f"[LB] Starting Load Balancer on {LB_HOST}:{LB_PORT}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as lb_socket:
         lb_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         lb_socket.bind((LB_HOST, LB_PORT))
@@ -60,7 +60,7 @@ def start_load_balancer():
 
         while True:
             client_socket, addr = lb_socket.accept()
-            print("[LB] Connection from {}",format(addr))
+            print(f"[LB] Connection from {addr}")
             threading.Thread(target=handle_client, args=(client_socket,), daemon=True).start()
 
 

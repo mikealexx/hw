@@ -18,7 +18,7 @@ backend_socket_locks = []
 
 # === server locks and server loads ===
 server_locks = [Lock() for _ in BACKEND_SERVERS]
-server_jobs = [0.0 for _ in BACKEND_SERVERS]
+server_jobs = [0.0 for _ in BACKEND_SERVERS]  # estimated load per server
 
 # === persistent connections ===
 def setup_backend_connections():
@@ -38,8 +38,9 @@ def parse_request(data):
         return ('music', duration)
     elif type_char == 'V':
         return ('video', duration)
-    else:
+    elif type_char == 'P':
         return ('picture', duration)
+    return None
 
 # === cost per server ===
 def get_cost(req_type, duration, server_index):
@@ -47,15 +48,16 @@ def get_cost(req_type, duration, server_index):
         return duration * (2 if server_index in [0, 1] else 1)
     elif req_type == 'video':
         return duration * (1 if server_index in [0, 1] else 3)
-    else:
+    elif req_type == 'picture':
         return duration * (1 if server_index in [0, 1] else 2)
+    return float('inf')
 
 # === choose server with min load ===
 def choose_server(parsed):
     req_type, duration = parsed
     now = time()
     best_i = 0
-    best_estimate = None
+    best_estimate = float('inf')
 
     for i in range(len(BACKEND_SERVERS)):
         cost = get_cost(req_type, duration, i)
@@ -106,7 +108,7 @@ def handle_client(client_socket):
     finally:
         client_socket.close()
 
-# === main loop ===
+# === Main LB loop ===
 def start_load_balancer():
     print("Starting load balancer on {}:{}".format(LB_HOST, LB_PORT))
     setup_backend_connections()

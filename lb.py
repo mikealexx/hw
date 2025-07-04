@@ -53,12 +53,9 @@ def handle_client(client_socket):
         try:
             backend_socket.sendall(request_data)
 
-            # Relay the response
-            while True:
-                response = backend_socket.recv(4096)
-                if not response:
-                    break
-                client_socket.sendall(response)
+            response = backend_socket.recv(4096)
+            client_socket.sendall(response)
+
 
         except Exception as e:
             print("[ERROR] Backend communication failed: {}".format(e))

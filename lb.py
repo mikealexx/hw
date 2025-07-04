@@ -1,23 +1,28 @@
+# -*- coding: utf-8 -*-
 import socket as sckt
 from socket import socket
 import threading
 from time import time
 
-# === configs ===
+# === Configuration ===
 LB_HOST = '10.0.0.1'
 LB_PORT = 80
 
 BACKEND_SERVERS = [
-    ('192.168.0.101', 80),  # server 1 - video
-    ('192.168.0.102', 80),  # server 2 - video
-    ('192.168.0.103', 80)   # server 3 - music
+    ('192.168.0.101', 80),  # serv1 = VIDEO
+    ('192.168.0.102', 80),  # serv2 = VIDEO
+    ('192.168.0.103', 80)   # serv3 = MUSIC
 ]
 
-# === backend sockets ===
+# === Global state ===
 backend_sockets = []
 backend_socket_locks = []
 
-# === persistent backend connections ===
+# Track queue of jobs per server
+server_locks = [threading.Lock() for _ in BACKEND_SERVERS]
+server_jobs = [0.0 for _ in BACKEND_SERVERS]  # estimated load per server
+
+# === Setup persistent connections ===
 def setup_backend_connections():
     for ip, port in BACKEND_SERVERS:
         s = socket(sckt.AF_INET, sckt.SOCK_STREAM)
@@ -25,56 +30,50 @@ def setup_backend_connections():
         backend_sockets.append(s)
         backend_socket_locks.append(threading.Lock())
 
-# === serevr load tracking ===
-server_free_at = [time(), time(), time()]
-server_free_time_locks = [threading.Lock() for _ in BACKEND_SERVERS]
-
-# === request time calculations per server ===
-def get_actual_request_time(parsed_data, server_index):
-    req_type, duration = parsed_data
-
-    if req_type == 'music':
-        return duration * (2 if server_index in [0, 1] else 1)
-    elif req_type == 'video':
-        return duration * (1 if server_index in [0, 1] else 3)
-    elif req_type == 'picture':
-        return duration * (1 if server_index in [0, 1] else 2)
-
-    return float('inf')  # fallback
-
-# === choose best server based on loads ===
-def choose_next_server(parsed_data):
-    now = time()
-    estimated_finish_times = []
-
-    for i in range(len(BACKEND_SERVERS)):
-        server_time = get_actual_request_time(parsed_data, i)
-        with server_free_time_locks[i]:
-            available_at = server_free_at[i]
-        finish_time = max(now, available_at) + server_time
-        estimated_finish_times.append(finish_time)
-
-    best_index = min(range(len(estimated_finish_times)), key=lambda i: estimated_finish_times[i])
-    return best_index, estimated_finish_times[best_index]
-
-# === parse requests, retrun (type,time) ===
+# === Request parser ===
 def parse_request(data):
     if len(data) != 2 or not data[1].isdigit():
         return None
-
     type_char = data[0]
     duration = int(data[1])
-
     if type_char == 'M':
         return ('music', duration)
     elif type_char == 'V':
         return ('video', duration)
     elif type_char == 'P':
         return ('picture', duration)
-
     return None
 
-# === client connection thread func ===
+# === Cost per server ===
+def get_cost(req_type, duration, server_index):
+    if req_type == 'music':
+        return duration * (2 if server_index in [0, 1] else 1)
+    elif req_type == 'video':
+        return duration * (1 if server_index in [0, 1] else 3)
+    elif req_type == 'picture':
+        return duration * (1 if server_index in [0, 1] else 2)
+    return float('inf')
+
+# === Choose server with shortest total load (now + queue) ===
+def choose_server(parsed):
+    req_type, duration = parsed
+    now = time()
+    best_i = 0
+    best_estimate = float('inf')
+
+    for i in range(len(BACKEND_SERVERS)):
+        cost = get_cost(req_type, duration, i)
+        server_locks[i].acquire()
+        load = server_jobs[i]
+        server_locks[i].release()
+        finish_time = max(now, load) + cost
+        if finish_time < best_estimate:
+            best_estimate = finish_time
+            best_i = i
+
+    return best_i, get_cost(req_type, duration, best_i)
+
+# === Client handler ===
 def handle_client(client_socket):
     try:
         request_data = client_socket.recv(2)
@@ -82,31 +81,47 @@ def handle_client(client_socket):
             return
 
         parsed = parse_request(request_data)
+        if not parsed:
+            print("[ERROR] Invalid request: {}".format(request_data))
+            return
 
-        server_index, estimated_finish = choose_next_server(parsed)
+        server_index, cost = choose_server(parsed)
 
-        # Update the server's expected available time
-        with server_free_time_locks[server_index]:
-            server_free_at[server_index] = estimated_finish
+        # Reserve estimated time
+        now = time()
+        server_locks[server_index].acquire()
+        start_time = max(now, server_jobs[server_index])
+        server_jobs[server_index] = start_time + cost  # reserve time slot
+        server_locks[server_index].release()
 
+        # Send to backend
         backend_socket = backend_sockets[server_index]
         backend_lock = backend_socket_locks[server_index]
 
-        with backend_lock:
+        backend_lock.acquire()
+        try:
             backend_socket.sendall(request_data)
             response = backend_socket.recv(2)
             client_socket.sendall(response)
+        finally:
+            backend_lock.release()
+
+        # Update actual finish time after response
+        server_locks[server_index].acquire()
+        server_jobs[server_index] = time()  # finished now
+        server_locks[server_index].release()
+
+        print("[LOG] Routed {} to server {}, expected cost {}, done at {:.2f}".format(
+            request_data, server_index + 1, cost, time()))
 
     except Exception as e:
         print("[ERROR] {}".format(e))
-
     finally:
         client_socket.close()
 
-# === Main server loop ===
+# === Main LB loop ===
 def start_load_balancer():
     print("Starting Load Balancer on {}:{}".format(LB_HOST, LB_PORT))
-
     setup_backend_connections()
 
     lb_socket = socket(sckt.AF_INET, sckt.SOCK_STREAM)
@@ -121,15 +136,12 @@ def start_load_balancer():
             t = threading.Thread(target=handle_client, args=(client_socket,))
             t.setDaemon(True)
             t.start()
-
     except KeyboardInterrupt:
         print("Shutting down Load Balancer.")
-
     finally:
         lb_socket.close()
         for sock in backend_sockets:
             sock.close()
-
 
 if __name__ == "__main__":
     start_load_balancer()

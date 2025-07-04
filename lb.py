@@ -3,24 +3,21 @@ from socket import socket
 import threading
 from time import time
 
-# === Configuration ===
-LB_HOST = '10.0.0.1'  # Load balancer IP on client-facing network
-LB_PORT = 80          # Port to listen on
+# === configs ===
+LB_HOST = '10.0.0.1'
+LB_PORT = 80
 
 BACKEND_SERVERS = [
-    ('192.168.0.101', 80),  # Server 1 (VIDEO)
-    ('192.168.0.102', 80),  # Server 2 (VIDEO)
-    ('192.168.0.103', 80)   # Server 3 (MUSIC)
+    ('192.168.0.101', 80),  # server 1 - video
+    ('192.168.0.102', 80),  # server 2 - video
+    ('192.168.0.103', 80)   # server 3 - music
 ]
 
-# === Global state ===
+# === backend sockets ===
 backend_sockets = []
 backend_socket_locks = []
 
-server_free_at = [time(), time(), time()]
-server_free_time_locks = [threading.Lock() for _ in BACKEND_SERVERS]
-
-# === Initialize persistent backend connections ===
+# === persistent backend connections ===
 def setup_backend_connections():
     for ip, port in BACKEND_SERVERS:
         s = socket(sckt.AF_INET, sckt.SOCK_STREAM)
@@ -28,7 +25,11 @@ def setup_backend_connections():
         backend_sockets.append(s)
         backend_socket_locks.append(threading.Lock())
 
-# === Cost estimation based on request type and server type ===
+# === serevr load tracking ===
+server_free_at = [time(), time(), time()]
+server_free_time_locks = [threading.Lock() for _ in BACKEND_SERVERS]
+
+# === request time calculations per server ===
 def get_actual_request_time(parsed_data, server_index):
     req_type, duration = parsed_data
 
@@ -41,7 +42,7 @@ def get_actual_request_time(parsed_data, server_index):
 
     return float('inf')  # fallback
 
-# === Choose best server based on predicted finish time ===
+# === choose best server based on loads ===
 def choose_next_server(parsed_data):
     now = time()
     estimated_finish_times = []
@@ -56,7 +57,7 @@ def choose_next_server(parsed_data):
     best_index = min(range(len(estimated_finish_times)), key=lambda i: estimated_finish_times[i])
     return best_index, estimated_finish_times[best_index]
 
-# === Parse request like "V3" - ("video", 3) ===
+# === parse requests, retrun (type,time) ===
 def parse_request(data):
     if len(data) != 2 or not data[1].isdigit():
         return None
@@ -73,7 +74,7 @@ def parse_request(data):
 
     return None
 
-# === Handle one client connection ===
+# === client connection thread func ===
 def handle_client(client_socket):
     try:
         request_data = client_socket.recv(2)
@@ -81,9 +82,6 @@ def handle_client(client_socket):
             return
 
         parsed = parse_request(request_data)
-        if not parsed:
-            print("[ERROR] Invalid request format: {}".format(request_data))
-            return
 
         server_index, estimated_finish = choose_next_server(parsed)
 
@@ -98,8 +96,6 @@ def handle_client(client_socket):
             backend_socket.sendall(request_data)
             response = backend_socket.recv(2)
             client_socket.sendall(response)
-
-        print("[LOG] Routed {} to server {}, will be free at {:.2f}".format(request_data, server_index + 1, estimated_finish))
 
     except Exception as e:
         print("[ERROR] {}".format(e))

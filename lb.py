@@ -82,6 +82,9 @@ def handle_client(client_socket):
 
         server_index, cost = choose_server(parsed)
 
+        print("request {} assigned to server {} with".format(
+            request_data, BACKEND_SERVERS[server_index]))
+
         now = time()
         server_locks[server_index].acquire()
         start_time = max(now, server_jobs[server_index])

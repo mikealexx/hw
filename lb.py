@@ -64,7 +64,7 @@ def handle_client(client_socket):
         if not request_data:
             return
 
-        parsed = request_data[0], request_data[1]
+        parsed = request_data[0], int(request_data[1])
 
         server_index, cost = choose_server(parsed)
 

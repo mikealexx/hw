@@ -28,13 +28,27 @@ def setup_backend_connections():
         backend_sockets.append(s)
         backend_socket_locks.append(Lock())
 
+# === request parser ===
+def parse_request(data):
+    if len(data) != 2 or not data[1].isdigit():
+        return None
+    type_char = data[0]
+    duration = int(data[1])
+    if type_char == 'M':
+        return ('music', duration)
+    elif type_char == 'V':
+        return ('video', duration)
+    elif type_char == 'P':
+        return ('picture', duration)
+    return None
+
 # === Cost per server ===
 def get_cost(req_type, duration, server_index):
-    if req_type == 'M':
+    if req_type == 'music':
         return duration * (2 if server_index in [0, 1] else 1)
-    elif req_type == 'V':
+    elif req_type == 'video':
         return duration * (1 if server_index in [0, 1] else 3)
-    elif req_type == 'P':
+    elif req_type == 'picture':
         return duration * (1 if server_index in [0, 1] else 2)
     return float('inf')
 
@@ -64,7 +78,7 @@ def handle_client(client_socket):
         if not request_data:
             return
 
-        parsed = request_data[0], int(request_data[1])
+        parsed = parse_request(request_data)
 
         server_index, cost = choose_server(parsed)
 

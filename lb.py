@@ -44,7 +44,7 @@ def choose_next_server():
     return server_index
 
 
-def handle_client(client_socket: socket.socket):
+def handle_client(client_socket):
     try:
         request_data = client_socket.recv(1024)
         if not request_data:

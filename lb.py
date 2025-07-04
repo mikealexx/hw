@@ -4,114 +4,102 @@ import threading
 from time import time
 
 # === Configuration ===
-LB_HOST = '10.0.0.1'       # Your LB IP in the client-facing network
-LB_PORT = 80               # Listening port (clients connect here)
+LB_HOST = '10.0.0.1'  # Load balancer IP on client-facing network
+LB_PORT = 80          # Port to listen on
 
 BACKEND_SERVERS = [
-    ('192.168.0.101', 80),
-    ('192.168.0.102', 80),
-    ('192.168.0.103', 80)
+    ('192.168.0.101', 80),  # Server 1 (VIDEO)
+    ('192.168.0.102', 80),  # Server 2 (VIDEO)
+    ('192.168.0.103', 80)   # Server 3 (MUSIC)
 ]
 
 # === Global state ===
-next_server_index = 0
-index_lock = threading.Lock()
 backend_sockets = []
 backend_socket_locks = []
 
 server_free_at = [time(), time(), time()]
-server_free_time_locks = [threading.Lock() for _ in range(len(BACKEND_SERVERS))]
+server_free_time_locks = [threading.Lock() for _ in BACKEND_SERVERS]
 
-# === Initialize backend connections ===
+# === Initialize persistent backend connections ===
 def setup_backend_connections():
-    global backend_sockets, backend_socket_locks
     for ip, port in BACKEND_SERVERS:
         s = socket(sckt.AF_INET, sckt.SOCK_STREAM)
         s.connect((ip, port))
         backend_sockets.append(s)
         backend_socket_locks.append(threading.Lock())
 
+# === Cost estimation based on request type and server type ===
 def get_actual_request_time(parsed_data, server_index):
-    type = parsed_data[0]
-    time = parsed_data[1]
+    req_type, duration = parsed_data
 
-    if type == 'music':
-        if server_index == 0:
-            return time * 2
-        elif server_index == 1:
-            return time * 2
-        elif server_index == 2:
-            return time
-        
-    elif type == 'video':
-        if server_index == 0:
-            return time
-        elif server_index == 1:
-            return time
-        else:
-            return time * 3
-        
-    else:
-        if server_index == 0:
-            return time
-        elif server_index == 1:
-            return time
-        else:
-            return time * 2
+    if req_type == 'music':
+        return duration * (2 if server_index in [0, 1] else 1)
+    elif req_type == 'video':
+        return duration * (1 if server_index in [0, 1] else 3)
+    elif req_type == 'picture':
+        return duration * (1 if server_index in [0, 1] else 2)
 
-# === Best wait time server selection ===
+    return float('inf')  # fallback
+
+# === Choose best server based on predicted finish time ===
 def choose_next_server(parsed_data):
-    server_times = [
-        get_actual_request_time(parsed_data, 0) + server_free_at[0],
-        get_actual_request_time(parsed_data, 1) + server_free_at[1],
-        get_actual_request_time(parsed_data, 2) + server_free_at[2]
-    ]
-    return min(range(len(server_times)), key=lambda i: server_times[i]), min(server_times)
+    now = time()
+    estimated_finish_times = []
 
-def parse_request(request_data):
-    type = None
-    if request_data[0] == 'M':
-        type = 'music'
-    elif request_data[0] == 'V':
-        type = 'video'
-    else:
-        type = 'picture'
-    return type, int(request_data[1])
+    for i in range(len(BACKEND_SERVERS)):
+        server_time = get_actual_request_time(parsed_data, i)
+        with server_free_time_locks[i]:
+            available_at = server_free_at[i]
+        finish_time = max(now, available_at) + server_time
+        estimated_finish_times.append(finish_time)
 
-# === Handle one client request ===
+    best_index = min(range(len(estimated_finish_times)), key=lambda i: estimated_finish_times[i])
+    return best_index, estimated_finish_times[best_index]
+
+# === Parse request like "V3" → ("video", 3) ===
+def parse_request(data):
+    if len(data) != 2 or not data[1].isdigit():
+        return None
+
+    type_char = data[0]
+    duration = int(data[1])
+
+    if type_char == 'M':
+        return ('music', duration)
+    elif type_char == 'V':
+        return ('video', duration)
+    elif type_char == 'P':
+        return ('picture', duration)
+
+    return None
+
+# === Handle one client connection ===
 def handle_client(client_socket):
     try:
         request_data = client_socket.recv(2)
         if not request_data:
-            client_socket.close()
             return
-        
-        server_index, serve_time = choose_next_server(parse_request(request_data))
-        server_free_time_locks[server_index].acquire()
-        try:
-            server_free_at[server_index] = serve_time
-        finally:
-            server_free_time_locks[server_index].release()
+
+        parsed = parse_request(request_data)
+        if not parsed:
+            print("[ERROR] Invalid request format: {}".format(request_data))
+            return
+
+        server_index, estimated_finish = choose_next_server(parsed)
+
+        # Update the server's expected available time
+        with server_free_time_locks[server_index]:
+            server_free_at[server_index] = estimated_finish
 
         backend_socket = backend_sockets[server_index]
         backend_lock = backend_socket_locks[server_index]
 
-        # Lock the socket so only one thread can use it at a time
-        backend_lock.acquire()
-
-        try:
+        with backend_lock:
             backend_socket.sendall(request_data)
-
             response = backend_socket.recv(2)
-            print("response: {}".format(response))
             client_socket.sendall(response)
 
-
-        except Exception as e:
-            print("[ERROR] Backend communication failed: {}".format(e))
-
-        finally:
-            backend_lock.release()
+        print("[LOG] Routed {} to server {}, will be free at {:.2f}".format(request_data, server_index + 1, estimated_finish))
 
     except Exception as e:
         print("[ERROR] {}".format(e))
@@ -134,15 +122,16 @@ def start_load_balancer():
         while True:
             client_socket, addr = lb_socket.accept()
             print("Connection from {}:{}".format(addr[0], addr[1]))
-            t = threading.Thread(target=handle_client, args=(client_socket,))
-            t.daemon = True
-            t.start()
+            threading.Thread(target=handle_client, args=(client_socket,), daemon=True).start()
+
     except KeyboardInterrupt:
-        print("Shutting down.")
+        print("Shutting down Load Balancer.")
+
     finally:
         lb_socket.close()
-        for s in backend_sockets:
-            s.close()
+        for sock in backend_sockets:
+            sock.close()
+
 
 if __name__ == "__main__":
     start_load_balancer()

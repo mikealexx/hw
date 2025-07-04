@@ -93,7 +93,7 @@ def start_load_balancer():
     setup_backend_connections()
 
     lb_socket = socket(sckt.AF_INET, sckt.SOCK_STREAM)
-    lb_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    lb_socket.setsockopt(sckt.SOL_SOCKET, sckt.SO_REUSEADDR, 1)
     lb_socket.bind((LB_HOST, LB_PORT))
     lb_socket.listen(10)
 

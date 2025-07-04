@@ -56,7 +56,7 @@ def choose_next_server(parsed_data):
     best_index = min(range(len(estimated_finish_times)), key=lambda i: estimated_finish_times[i])
     return best_index, estimated_finish_times[best_index]
 
-# === Parse request like "V3" → ("video", 3) ===
+# === Parse request like "V3" - ("video", 3) ===
 def parse_request(data):
     if len(data) != 2 or not data[1].isdigit():
         return None

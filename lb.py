@@ -72,7 +72,7 @@ def start_load_balancer():
     print("Starting Load Balancer on {}:{}".format(LB_HOST, LB_PORT))
 
     lb_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    lb_socket.bind((LB_HOST))
+    lb_socket.bind((LB_HOST, LB_PORT))
     lb_socket.listen()
 
     try:

@@ -2,48 +2,40 @@ import socket
 import threading
 
 # === Configuration ===
-LB_HOST = '10.0.0.1'        # Load balancer IP (client-facing)
-LB_PORT = 80              # Listening port
+LB_HOST = '10.0.0.1'       # Your LB IP in the client-facing network
+LB_PORT = 80               # Listening port (clients connect here)
 
 BACKEND_SERVERS = [
     ('192.168.0.101', 80),
     ('192.168.0.102', 80),
     ('192.168.0.103', 80)
 ]
-# =====================
 
-# === Round-robin index ===
+# === Global state ===
 next_server_index = 0
-server_lock = threading.Lock()
-# =========================
+index_lock = threading.Lock()
+backend_sockets = []
+backend_locks = []
 
-# === Backend Server Sockets ===
-server1_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server1_socket.connect(BACKEND_SERVERS[0])
+# === Initialize backend connections ===
+def setup_backend_connections():
+    global backend_sockets, backend_locks
+    for ip, port in BACKEND_SERVERS:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((ip, port))
+        backend_sockets.append(s)
+        backend_locks.append(threading.Lock())
 
-server2_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server2_socket.connect(BACKEND_SERVERS[1])
-
-server3_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server3_socket.connect(BACKEND_SERVERS[2])
-
-backend_sockets = [
-    server1_socket,
-    server2_socket,
-    server3_socket
-]
-# =============================
-
-
+# === Round robin server selection ===
 def choose_next_server():
     global next_server_index
-    server_lock.acquire()
-    server_index = next_server_index
+    index_lock.acquire()
+    i = next_server_index
     next_server_index = (next_server_index + 1) % len(BACKEND_SERVERS)
-    server_lock.release()
-    return server_index
+    index_lock.release()
+    return i
 
-
+# === Handle one client request ===
 def handle_client(client_socket):
     try:
         request_data = client_socket.recv(1024)
@@ -52,14 +44,27 @@ def handle_client(client_socket):
             return
 
         server_index = choose_next_server()
+        backend_socket = backend_sockets[server_index]
+        backend_lock = backend_locks[server_index]
 
-        backend_sockets[server_index].sendall(request_data)
+        # Lock the socket so only one thread can use it at a time
+        backend_lock.acquire()
 
-        while True:
-            response = backend_sockets[server_index].recv(1024)
-            if not response:
-                break
-            client_socket.sendall(response)
+        try:
+            backend_socket.sendall(request_data)
+
+            # Relay the response
+            while True:
+                response = backend_socket.recv(4096)
+                if not response:
+                    break
+                client_socket.sendall(response)
+
+        except Exception as e:
+            print("[ERROR] Backend communication failed: {}".format(e))
+
+        finally:
+            backend_lock.release()
 
     except Exception as e:
         print("[ERROR] {}".format(e))
@@ -67,28 +72,30 @@ def handle_client(client_socket):
     finally:
         client_socket.close()
 
-
+# === Main server loop ===
 def start_load_balancer():
     print("Starting Load Balancer on {}:{}".format(LB_HOST, LB_PORT))
 
+    setup_backend_connections()
+
     lb_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    lb_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     lb_socket.bind((LB_HOST, LB_PORT))
-    lb_socket.listen(0)
+    lb_socket.listen(10)
 
     try:
         while True:
             client_socket, addr = lb_socket.accept()
             print("Connection from {}:{}".format(addr[0], addr[1]))
-            t = threading.Thread(target=handle_client, args=(client_socket))
+            t = threading.Thread(target=handle_client, args=(client_socket,))
             t.daemon = True
             t.start()
     except KeyboardInterrupt:
         print("Shutting down.")
     finally:
         lb_socket.close()
-        for sock in backend_sockets:
-            sock.close()
-
+        for s in backend_sockets:
+            s.close()
 
 if __name__ == "__main__":
     start_load_balancer()
